@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ブラインドテニスゲーム</title>
+  <style>
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      display: grid;
+      place-items: center;
+      background: #080611;
+      color: #dffaff;
+      font-family: sans-serif;
+    }
+    main { text-align: center; }
+    #game { display: block; max-width: 95vw; max-height: 85vh; }
+    #status { margin: 0.75rem; color: #8defff; }
+  </style>
+</head>
+<body>
+  <main>
+    <canvas id="game" width="800" height="800"></canvas>
+    <p id="status">ゲームを読み込んでいます…</p>
+  </main>
+  <script src="wasm_exec.js"></script>
+  <script>
+    const go = new Go();
+    const status = document.getElementById('status');
+    WebAssembly.instantiateStreaming(fetch('tennis-go.wasm'), go.importObject)
+      .then(result => {
+        status.textContent = 'プレイできます。矢印キーで移動、Spaceで打ち返します。';
+        return go.run(result.instance);
+      })
+      .catch(error => {
+        status.textContent = 'ゲームを読み込めませんでした。';
+        console.error(error);
+      });
+  </script>
+</body>
+</html>

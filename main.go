@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"image/color"
 	"log"
@@ -13,6 +14,12 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 )
+
+// racketSound is embedded so the game can play the bundled racket sound
+// without depending on the current working directory at runtime.
+//
+//go:embed sounds/racket.m4a
+var racketSound []byte
 
 const (
 	screenWidth  = 800
@@ -39,7 +46,7 @@ type Game struct {
 
 func NewGame() *Game {
 	l := game.NewGameLogic()
-	ae := audio.NewEngine()
+	ae := audio.NewEngine(racketSound)
 
 	g := &Game{
 		logic: l,
@@ -55,7 +62,11 @@ func NewGame() *Game {
 		}
 	}
 	l.OnHit = func(isP1 bool) {
-		ae.PlayHit(isP1)
+		hitPlayer := g.logic.P1
+		if !isP1 {
+			hitPlayer = g.logic.P2
+		}
+		ae.PlayHit(isP1, hitPlayer.X, hitPlayer.Y, g.logic.P1.X, g.logic.P1.Y)
 		if isP1 {
 			g.p1SwingTimer = 15
 		} else {
@@ -63,7 +74,7 @@ func NewGame() *Game {
 		}
 	}
 	l.OnBounce = func(x, y float64) {
-		ae.PlayBounce(x, y)
+		ae.PlayBounce(x, y, g.logic.P1.X, g.logic.P1.Y)
 		g.ripples = append(g.ripples, Ripple{X: x, Y: y, Age: 0})
 	}
 	l.OnVoice = func(text string) { ae.PlayVoice(text) }
@@ -88,7 +99,7 @@ func (g *Game) Update() error {
 		}
 	}
 
-	// AI Logic
+	// CPU logic
 	if g.logic.State == game.StateServing {
 		if g.logic.Server == 1 && g.logic.Ready.P1 && !g.logic.Ready.P2 {
 			g.logic.Ready.P2 = true
@@ -114,9 +125,9 @@ func (g *Game) Update() error {
 		g.logic.MovePlayer(1, "down")
 	}
 
-	// AI Player 2 Movement and Swing
+	// CPU movement and swing
 	if g.logic.State == game.StateRally {
-		// Simple tracking AI
+		// Simple CPU tracking
 		targetX := g.logic.Ball.Pos.X
 		if g.logic.P2.X < targetX-5 {
 			g.logic.MovePlayer(2, "right")
@@ -128,7 +139,7 @@ func (g *Game) Update() error {
 		distY := g.logic.Ball.Pos.Y - g.logic.P2.Y
 		if distY > -100 && distY < 0 && g.logic.Ball.Vel.Y < 0 {
 			g.logic.Swing(2)
-			g.p2SwingTimer = 15 // Trigger visual swing trail for P2 (CPU)
+			g.p2SwingTimer = 15 // Trigger visual swing trail for the CPU
 		}
 	}
 
@@ -150,14 +161,18 @@ func (g *Game) Update() error {
 			if g.logic.State == game.StateRally {
 				g.logic.Swing(1)
 			}
-			g.p1SwingTimer = 15 // Trigger visual swing trail for P1 (User)
+			g.p1SwingTimer = 15 // Trigger visual swing trail for the player
 			g.audio.PlaySwing()
 		}
 	}
 
 	g.logic.Update()
 	b := g.logic.Ball
-	g.audio.UpdateBallSound(b.Pos.X, b.Pos.Y, b.Pos.Z, b.Vel.X, b.Vel.Y, b.Vel.Z)
+	g.audio.UpdateBallSound(
+		b.Pos.X, b.Pos.Y, b.Pos.Z,
+		b.Vel.X, b.Vel.Y, b.Vel.Z,
+		g.logic.P1.X, g.logic.P1.Y,
+	)
 
 	// Update ball flight trail
 	if g.logic.State == game.StateRally {
@@ -223,13 +238,13 @@ func (g *Game) drawPlayer(screen *ebiten.Image, x, y float64, isP1 bool) {
 	var primaryCol, secondaryCol, glowCol color.Color
 	var swingTimer int
 	if isP1 {
-		// Player 1 (User): Neon Cyan
+		// Player: Neon Cyan
 		primaryCol = color.RGBA{0, 180, 255, 0xff}
 		secondaryCol = color.RGBA{180, 230, 255, 0xff}
 		glowCol = color.RGBA{0, 210, 255, 0x22}
 		swingTimer = g.p1SwingTimer
 	} else {
-		// Player 2 (Computer): Neon Crimson
+		// CPU: Neon Crimson
 		primaryCol = color.RGBA{220, 0, 70, 0xff}
 		secondaryCol = color.RGBA{255, 150, 180, 0xff}
 		glowCol = color.RGBA{255, 0, 85, 0x22}
@@ -242,7 +257,7 @@ func (g *Game) drawPlayer(screen *ebiten.Image, x, y float64, isP1 bool) {
 
 	// 2. Draw racket reach/swing range visualizer
 	if isP1 {
-		// For Player 1, highlight in green if the ball is within hit range!
+		// Highlight in green if the ball is within the player's hit range.
 		dx := g.logic.Ball.Pos.X - g.logic.P1.X
 		dy := g.logic.Ball.Pos.Y - g.logic.P1.Y
 		dist := math.Sqrt(dx*dx + dy*dy)
@@ -257,7 +272,7 @@ func (g *Game) drawPlayer(screen *ebiten.Image, x, y float64, isP1 bool) {
 		}
 		vector.DrawFilledCircle(screen, px, py, 85*pScale, rangeCol, true)
 	} else {
-		// Computer reach circle (subtle crimson)
+		// CPU reach circle (subtle crimson)
 		vector.StrokeCircle(screen, px, py, 85*pScale, 1.0, color.RGBA{255, 0, 85, 0x22}, true)
 	}
 
@@ -378,7 +393,7 @@ func (g *Game) drawRipples(screen *ebiten.Image) {
 
 		// Neon green expanding rings
 		vector.StrokeCircle(screen, rx, ry, float32(radius), 2.0, color.RGBA{170, 255, 0, alpha}, true)
-		vector.StrokeCircle(screen, rx, ry, float32(radius * 0.8), 1.0, color.RGBA{0, 229, 255, alpha / 2}, true)
+		vector.StrokeCircle(screen, rx, ry, float32(radius*0.8), 1.0, color.RGBA{0, 229, 255, alpha / 2}, true)
 	}
 }
 
@@ -397,7 +412,11 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 
 	// Retro starry background
-	stars := []struct{ X, Y float32; Size float32; Alpha uint8 }{
+	stars := []struct {
+		X, Y  float32
+		Size  float32
+		Alpha uint8
+	}{
 		{120, 80, 1.5, 120}, {250, 140, 1.0, 80}, {380, 50, 2.0, 180},
 		{540, 120, 1.0, 90}, {680, 90, 1.5, 150}, {730, 160, 2.0, 100},
 		{180, 210, 1.0, 70}, {620, 200, 1.0, 60}, {310, 100, 1.5, 110},
@@ -490,7 +509,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	g.drawRipples(screen)
 
 	// 6. Draw players and ball in correct depth sorting relative to net
-	// Player 2 is always behind the net (Y < 0)
+	// The CPU is always behind the net (Y < 0)
 	g.drawPlayer(screen, g.logic.P2.X, g.logic.P2.Y, false)
 
 	ballY := g.logic.Ball.Pos.Y
@@ -502,13 +521,13 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 		g.drawNet(screen)
 
-		// Draw Player 1 (User, close)
+		// Draw the player (close)
 		g.drawPlayer(screen, g.logic.P1.X, g.logic.P1.Y, true)
 	} else {
 		// Ball is in near court (in front of net)
 		g.drawNet(screen)
 
-		// Draw Player 1 (User, close)
+		// Draw the player (close)
 		g.drawPlayer(screen, g.logic.P1.X, g.logic.P1.Y, true)
 
 		g.drawBallShadow(screen)
@@ -522,8 +541,8 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	vector.StrokeLine(screen, 0, 100, 800, 100, 2, color.RGBA{0x44, 0x33, 0x66, 0xaa}, true)
 
 	// Score text labels
-	ebitenutil.DebugPrintAt(screen, "PLAYER 1 (YOU)", 40, 15)
-	ebitenutil.DebugPrintAt(screen, "COMPUTER", 680, 15)
+	ebitenutil.DebugPrintAt(screen, "PLAYER", 40, 15)
+	ebitenutil.DebugPrintAt(screen, "CPU", 680, 15)
 
 	p1PointsStr := getPointScoreStr(g.logic.PointScore.P1)
 	p2PointsStr := getPointScoreStr(g.logic.PointScore.P2)
@@ -567,7 +586,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 				ebitenutil.DebugPrintAt(screen, "READY! Press SPACE to serve the ball", 282, 58)
 			}
 		} else {
-			ebitenutil.DebugPrintAt(screen, "★ COMPUTER SERVE ★", 335, 18)
+			ebitenutil.DebugPrintAt(screen, "★ CPU SERVE ★", 350, 18)
 
 			if !g.logic.Ready.P1 {
 				ebitenutil.DebugPrintAt(screen, "CPU is ready. Press SPACE to Call 'Ready' (はい)", 255, 45)

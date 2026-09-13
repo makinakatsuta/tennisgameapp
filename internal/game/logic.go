@@ -43,8 +43,8 @@ type GameLogic struct {
 	Ball              Ball
 	Server            int // 1 or 2
 	Ready             struct{ P1, P2 bool }
-	SelectedServeType int // For Player 1
-	AiServeType       int // For Player 2
+	SelectedServeType int // For the player
+	AiServeType       int // For the CPU
 	AiClumsy          bool
 	RNG               *rand.Rand
 
@@ -92,7 +92,7 @@ func (g *GameLogic) ResetBall(nextServer int) {
 	g.SelectedServeType = ServeSlice
 	g.AiClumsy = g.RNG.Float64() < 0.4
 	if nextServer == 2 {
-		// Randomly select AI serve type (33% each)
+		// Randomly select the CPU serve type (33% each)
 		g.AiServeType = g.RNG.Intn(3) + 1
 	}
 }
@@ -151,7 +151,9 @@ func (g *GameLogic) Swing(playerId int) {
 	dist := math.Sqrt(dx*dx + dy*dy)
 
 	if dist < 85 && g.Ball.Pos.Z < 180 {
-		if g.OnHit != nil { g.OnHit(playerId == 1) }
+		if g.OnHit != nil {
+			g.OnHit(playerId == 1)
+		}
 
 		angle := dx / 35
 		vy := 3.2
@@ -223,7 +225,9 @@ func (g *GameLogic) Update() {
 			g.Ball.Pos.Z = 0
 			g.Ball.Vel.Z = -g.Ball.Vel.Z * BounceFactor
 			g.Ball.Bounces++
-			if g.OnBounce != nil { g.OnBounce(g.Ball.Pos.X, g.Ball.Pos.Y) }
+			if g.OnBounce != nil {
+				g.OnBounce(g.Ball.Pos.X, g.Ball.Pos.Y)
+			}
 
 			// Out of bounds or too many bounces
 			if math.Abs(g.Ball.Pos.X) > CourtWidth/2 || math.Abs(g.Ball.Pos.Y) > CourtLength/2 || g.Ball.Bounces > MaxBounces {
